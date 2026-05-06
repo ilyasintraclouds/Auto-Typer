@@ -36,10 +36,10 @@ jobs:
           $version = Get-Content version.txt -Raw
           $version = $version.Trim()
           echo "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
-          echo "App Version: $version"
         shell: pwsh
 
       - name: Build EXE
+        shell: cmd
         run: |
           pyinstaller --onefile --windowed --noconsole ^
             --icon=icon.ico ^
@@ -51,13 +51,14 @@ jobs:
             Typer.py
 
       - name: Rename EXE with Version
+        shell: pwsh
         run: |
           Copy-Item "dist\Auto Typer.exe" "dist\Auto Typer v${{ env.VERSION }}.exe"
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Typer-Bot-EXE
+          name: Auto-Typer-EXE
           path: dist/Auto Typer v${{ env.VERSION }}.exe
 
       - name: Create Release
