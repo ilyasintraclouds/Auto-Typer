@@ -182,7 +182,7 @@ class AutoTyper(QMainWindow):
         # Countdown
         self.countdown_label = QLabel("Ready")
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont("Segoe UI", 19, QFont.Bold))
+        self.countdown_label.setFont(QFont("Segoe UI", 16, QFont.Bold))
         self.countdown_label.setStyleSheet("color: #a6e3a1; padding: 10px;")
         main.addWidget(self.countdown_label)
         
