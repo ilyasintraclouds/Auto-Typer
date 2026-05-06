@@ -31,3 +31,10 @@ A simple GUI-based auto typer built with Python. Useful for typing code, command
 
 ```bash
 pip install -r requirements.txt
+```
+
+## Execution
+Use the following command to execute the script:
+```bash
+python Typer.py
+```
