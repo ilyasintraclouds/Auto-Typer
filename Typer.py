@@ -313,6 +313,9 @@ class AutoTyper(QMainWindow):
         self.detailed_logging = QCheckBox("Enable detailed logging (to file)")
         self.detailed_logging.setChecked(False)
         l5.addWidget(self.detailed_logging)
+        self.shift_enter = QCheckBox("Use Shift+Enter for new lines (chat apps: avoids sending)")
+        self.shift_enter.setChecked(False)
+        l5.addWidget(self.shift_enter)
         options.addWidget(g5)
 
         log_btn = QPushButton("📂 Open Logs")
@@ -405,13 +408,14 @@ class AutoTyper(QMainWindow):
 
         handle_autoclose = self.handle_autoclose.isChecked()
         handle_indent = self.handle_indent.isChecked()
+        shift_enter = self.shift_enter.isChecked()
         self.use_tabs = False
 
-        self._type_text(text, line_delay, handle_autoclose, handle_indent)
+        self._type_text(text, line_delay, handle_autoclose, handle_indent, shift_enter)
 
         self.signals.typing_finished.emit()
 
-    def _type_text(self, text, line_delay, handle_autoclose, handle_indent):
+    def _type_text(self, text, line_delay, handle_autoclose, handle_indent, shift_enter=False):
         char_interval = self.speed_slider.value() / 1000.0
         lines = text.splitlines()
 
@@ -441,8 +445,12 @@ class AutoTyper(QMainWindow):
                         time.sleep(char_interval)
 
             if line_idx < len(lines) - 1:
-                pyautogui.press('enter')
-                self.log(f"Line {line_idx+1}: pressed Enter")
+                if shift_enter:
+                    pyautogui.hotkey('shift', 'enter')
+                    self.log(f"Line {line_idx+1}: pressed Shift+Enter")
+                else:
+                    pyautogui.press('enter')
+                    self.log(f"Line {line_idx+1}: pressed Enter")
 
                 if handle_indent:
                     time.sleep(0.2)  # Give VS Code time to auto‑indent
