@@ -14,6 +14,8 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, pyqtSignal, QObject
 from PyQt5.QtGui import QFont, QIcon
 import pyautogui
+import plain_text_sol
+import python_sol
 
 
 class Signals(QObject):
@@ -39,6 +41,7 @@ class AutoTyper(QMainWindow):
     AUTO_INDENT_CHARS = {'(', '{', '[', ':'}
 
     LANG_INDENT = {
+        "Plain Text": 0,  # Plain text with no indentation
         "Python": 4,
         "JavaScript": 2,
         "TypeScript": 2,
@@ -131,6 +134,9 @@ class AutoTyper(QMainWindow):
                 padding: 4px 6px;
                 min-width: 90px;
             }
+            QComboBox {
+                max-height: 30px;
+            }
             QComboBox::drop-down {
                 border: none;
             }
@@ -145,6 +151,8 @@ class AutoTyper(QMainWindow):
                 background-color: #181825;
                 color: #cdd6f4;
                 selection-background-color: #45475a;
+                max-height: 150px;
+                min-height: 30px;
             }
             QSlider::groove:horizontal {
                 background: #313244;
@@ -293,8 +301,12 @@ class AutoTyper(QMainWindow):
         l4 = QHBoxLayout(g4)
         self.lang_combo = QComboBox()
         self.lang_combo.addItems(sorted(self.LANG_INDENT.keys()))
-        self.lang_combo.setCurrentText("Python")
+        self.lang_combo.setCurrentText("Plain Text")
         self.lang_combo.currentTextChanged.connect(self.on_language_changed)
+        
+        # Ensure dropdown has scrollbar and limited height
+        self.lang_combo.setMaxVisibleItems(6)
+        
         l4.addWidget(QLabel("Language:"))
         l4.addWidget(self.lang_combo)
         self.indent_info_label = QLabel("(4 spaces)")
@@ -357,7 +369,22 @@ class AutoTyper(QMainWindow):
 
     def on_language_changed(self, lang):
         self.indent_size = self.LANG_INDENT.get(lang, 4)
-        self.indent_info_label.setText(f"({self.indent_size} spaces)")
+        
+        # For Plain Text, automatically uncheck auto-closing and auto-indentation
+        if lang == "Plain Text":
+            self.handle_autoclose.setChecked(False)
+            self.handle_autoclose.setEnabled(False)
+            self.handle_indent.setChecked(False)
+            self.handle_indent.setEnabled(False)
+            self.indent_info_label.setText("(plain text)")
+            self.indent_info_label.setStyleSheet("color: #f38ba8; font-weight: bold;")
+        else:
+            # Re-enable the checkboxes when switching from Plain Text
+            self.handle_autoclose.setEnabled(True)
+            self.handle_indent.setEnabled(True)
+            self.indent_info_label.setStyleSheet("color: #a6e3a1; font-weight: bold;")
+            self.indent_info_label.setText(f"({self.indent_size} spaces)")
+        
         self.log(f"Language set to {lang}, indent size = {self.indent_size}")
 
     def update_speed_label(self, val):
@@ -409,13 +436,50 @@ class AutoTyper(QMainWindow):
         handle_autoclose = self.handle_autoclose.isChecked()
         handle_indent = self.handle_indent.isChecked()
         shift_enter = self.shift_enter.isChecked()
+        language = self.lang_combo.currentText()
         self.use_tabs = False
 
-        self._type_text(text, line_delay, handle_autoclose, handle_indent, shift_enter)
+        self._type_text(
+            text,
+            line_delay,
+            handle_autoclose,
+            handle_indent,
+            shift_enter,
+            language,
+        )
 
         self.signals.typing_finished.emit()
 
-    def _type_text(self, text, line_delay, handle_autoclose, handle_indent, shift_enter=False):
+    def _type_text(
+        self,
+        text,
+        line_delay,
+        handle_autoclose,
+        handle_indent,
+        shift_enter=False,
+        language=None,
+    ):
+        if language == "Plain Text" or (not handle_autoclose and not handle_indent):
+            plain_text_sol.type_text(
+                text,
+                self.speed_slider.value() / 1000.0,
+                line_delay,
+                lambda: self.stop_flag,
+                shift_enter,
+            )
+            return
+
+        if language == "Python":
+            python_sol.type_text(
+                self,
+                text,
+                line_delay,
+                handle_autoclose,
+                handle_indent,
+                shift_enter,
+            )
+            return
+
         char_interval = self.speed_slider.value() / 1000.0
         lines = text.splitlines()
 
