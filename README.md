@@ -38,3 +38,14 @@ Use the following command to execute the script:
 ```bash
 python Typer.py
 ```
+
+## Releases
+
+After committing the release changes, create and push a version tag:
+
+```bash
+git tag -a v2.2.0 -m "Release v2.2.0"
+git push origin v2.2.0
+```
+
+GitHub Actions builds the executable and publishes the GitHub release for pushed `v*` tags.
