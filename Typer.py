@@ -22,6 +22,11 @@ import python_sol
 import tags
 
 
+# Shown in the title bar. The installer and the release workflow take their
+# version from the git tag, so bump this with them.
+VERSION = "2.3"
+
+
 class Signals(QObject):
     countdown_update = pyqtSignal(int)
     typing_finished = pyqtSignal()
@@ -60,7 +65,7 @@ class AutoTyper(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Auto Typer")
+        self.setWindowTitle(f"Auto Typer v{VERSION}")
         self.setWindowIcon(QIcon(resource_path("icon.ico")))
         self.resize(1000, 750)
 
