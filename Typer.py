@@ -2,6 +2,7 @@ import sys
 import time
 import threading
 import os
+import json
 import logging
 import subprocess
 from datetime import datetime
@@ -9,18 +10,23 @@ from datetime import datetime
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QTextEdit, QPushButton, QSpinBox, QSlider, QGroupBox,
-    QCheckBox, QSizePolicy, QComboBox
+    QCheckBox, QSizePolicy, QComboBox, QShortcut
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QObject
-from PyQt5.QtGui import QFont, QIcon
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPoint
+from PyQt5.QtGui import (
+    QFont, QIcon, QKeySequence, QPixmap, QPainter, QColor, QPolygon
+)
 import pyautogui
 import plain_text_sol
 import python_sol
+import tags
 
 
 class Signals(QObject):
     countdown_update = pyqtSignal(int)
     typing_finished = pyqtSignal()
+    status_update = pyqtSignal(str)
+    keys_used = pyqtSignal(str)
 
 
 def resource_path(relative_path):
@@ -59,14 +65,18 @@ class AutoTyper(QMainWindow):
         self.resize(1000, 750)
 
         self.setup_logging()
+        self.recent_keys = self.load_recent_keys()
         self.init_ui()
 
         self.signals = Signals()
         self.signals.countdown_update.connect(self.update_countdown)
         self.signals.typing_finished.connect(self.on_typing_finished)
+        self.signals.status_update.connect(self.update_status)
+        self.signals.keys_used.connect(self.on_keys_used)
 
         self.stop_flag = False
         self.typing_thread = None
+        self.current_line = 0
         self.indent_size = 4
         self.use_tabs = False
         pyautogui.FAILSAFE = True
@@ -87,6 +97,73 @@ class AutoTyper(QMainWindow):
         if self.detailed_logging.isChecked():
             self.logger.info(msg)
 
+    def report(self, msg):
+        self.signals.status_update.emit(msg)
+
+    def report_line(self, number):
+        self.current_line = number
+        self.signals.status_update.emit(f"Executing line {number}...")
+
+    def report_wait(self, seconds):
+        unit = "second" if seconds == 1 else "seconds"
+        self.signals.status_update.emit(
+            f"Executing line {self.current_line}... "
+            f"Waiting for {seconds} {unit}..."
+        )
+
+    def remember_keys(self, label):
+        self.signals.keys_used.emit(label)
+
+    def recent_keys_path(self):
+        base = (
+            os.environ.get("LOCALAPPDATA")
+            or os.environ.get("APPDATA")
+            or os.path.expanduser("~")
+        )
+        folder = os.path.join(base, "AutoTyper")
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, "recent_keys.json")
+
+    def load_recent_keys(self):
+        try:
+            with open(self.recent_keys_path(), encoding="utf-8") as handle:
+                saved = json.load(handle)
+            keys = [str(key) for key in saved if str(key).strip()]
+            if keys:
+                return keys[:tags.MAX_RECENT_KEYS]
+        except (OSError, ValueError, TypeError):
+            pass
+        return list(tags.DEFAULT_RECENT_KEYS)
+
+    def make_arrow_image(self, color):
+        # Qt ignores width/height on ::down-arrow, so a CSS border triangle
+        # renders as a rectangle. A real image is the only reliable arrow.
+        try:
+            folder = os.path.dirname(self.recent_keys_path())
+            path = os.path.join(folder, f"arrow_{color.lstrip('#')}.png")
+            pixmap = QPixmap(14, 9)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(color))
+            painter.drawPolygon(
+                QPolygon([QPoint(1, 2), QPoint(13, 2), QPoint(7, 8)])
+            )
+            painter.end()
+            if pixmap.save(path, "PNG"):
+                return path.replace("\\", "/")
+        except OSError as error:
+            self.logger.warning(f"Could not draw the dropdown arrow: {error}")
+        return ""
+
+    def save_recent_keys(self):
+        try:
+            with open(self.recent_keys_path(), "w", encoding="utf-8") as handle:
+                json.dump(self.recent_keys, handle, indent=2)
+        except OSError as error:
+            self.logger.warning(f"Could not save recent keys: {error}")
+
     def open_logs_folder(self):
         if sys.platform == 'win32':
             os.startfile(self.log_dir)
@@ -96,7 +173,11 @@ class AutoTyper(QMainWindow):
             subprocess.run(['xdg-open', self.log_dir])
 
     def init_ui(self):
-        self.setStyleSheet("""
+        self.apply_stylesheet()
+        self.build_layout()
+
+    def apply_stylesheet(self):
+        style = """
             QMainWindow { background-color: #1e1e2e; }
             QLabel {
                 color: #cdd6f4;
@@ -139,13 +220,14 @@ class AutoTyper(QMainWindow):
             }
             QComboBox::drop-down {
                 border: none;
+                width: 22px;
             }
             QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #cdd6f4;
-                margin-right: 5px;
+                __ARROW_IMAGE__
+                margin-right: 8px;
+            }
+            QComboBox::down-arrow:hover {
+                __ARROW_HOVER__
             }
             QComboBox QAbstractItemView {
                 background-color: #181825;
@@ -209,6 +291,29 @@ class AutoTyper(QMainWindow):
             QPushButton#logBtn:hover {
                 background-color: #b4f0b0;
             }
+            QPushButton#tagBtn {
+                background-color: #cba6f7;
+                color: #1e1e2e;
+                padding: 6px 12px;
+                font-family: 'Consolas', monospace;
+                font-size: 12px;
+                border-radius: 8px;
+            }
+            QPushButton#tagBtn:hover {
+                background-color: #ddb6fc;
+            }
+            QPushButton#keyChip {
+                background-color: #313244;
+                color: #cdd6f4;
+                padding: 6px 10px;
+                font-size: 12px;
+                font-weight: normal;
+                border-radius: 8px;
+            }
+            QPushButton#keyChip:hover {
+                background-color: #45475a;
+                color: #89b4fa;
+            }
             QCheckBox {
                 color: #cdd6f4;
                 font-size: 12px;
@@ -228,8 +333,27 @@ class AutoTyper(QMainWindow):
             QCheckBox::indicator:hover {
                 border: 2px solid #89b4fa;
             }
-        """)
+        """
 
+        arrow = self.make_arrow_image("#cdd6f4")
+        arrow_hover = self.make_arrow_image("#89b4fa")
+        fallback = (
+            "image: none;"
+            "border-left: 5px solid transparent;"
+            "border-right: 5px solid transparent;"
+            "border-top: 6px solid %s;"
+        )
+        style = style.replace(
+            "__ARROW_IMAGE__",
+            f"image: url({arrow});" if arrow else fallback % "#cdd6f4",
+        )
+        style = style.replace(
+            "__ARROW_HOVER__",
+            f"image: url({arrow_hover});" if arrow_hover else fallback % "#89b4fa",
+        )
+        self.setStyleSheet(style)
+
+    def build_layout(self):
         central = QWidget()
         self.setCentralWidget(central)
         main = QVBoxLayout(central)
@@ -252,9 +376,61 @@ class AutoTyper(QMainWindow):
         text_layout = QVBoxLayout(text_group)
         self.text_edit = QTextEdit()
         self.text_edit.setMinimumHeight(240)
-        self.text_edit.setPlaceholderText("Paste your code here...")
+        self.text_edit.setPlaceholderText(
+            "Paste your code here...\n\n"
+            "Tags:  <KeyPress> Ctrl + C <KeyPress>    <Wait> 120 <Wait>\n"
+            "A space starts the next press:  <KeyPress> Right Right Right <KeyPress>\n"
+            "A tag-only line types no newline - use <KeyPress> Enter <KeyPress>"
+        )
         text_layout.addWidget(self.text_edit)
         main.addWidget(text_group)
+
+        tag_group = QGroupBox("Quick Insert")
+        tag_layout = QHBoxLayout(tag_group)
+        tag_layout.setSpacing(8)
+
+        keypress_btn = QPushButton("<KeyPress>")
+        keypress_btn.setObjectName("tagBtn")
+        keypress_btn.setCursor(Qt.PointingHandCursor)
+        keypress_btn.setToolTip(
+            "Insert an empty KeyPress tag (Ctrl+K)\n"
+            "'+' joins a combo, a space starts the next press"
+        )
+        keypress_btn.clicked.connect(self.insert_keypress_tag)
+        tag_layout.addWidget(keypress_btn)
+
+        wait_btn = QPushButton("<Wait>")
+        wait_btn.setObjectName("tagBtn")
+        wait_btn.setCursor(Qt.PointingHandCursor)
+        wait_btn.setToolTip("Insert an empty Wait tag (Ctrl+Shift+W)")
+        wait_btn.clicked.connect(self.insert_wait_tag)
+        tag_layout.addWidget(wait_btn)
+
+        recent_label = QLabel("Recent:")
+        recent_label.setStyleSheet("color: #9399b2; font-size: 12px;")
+        tag_layout.addWidget(recent_label)
+
+        self.recent_container = QWidget()
+        self.recent_layout = QHBoxLayout(self.recent_container)
+        self.recent_layout.setContentsMargins(0, 0, 0, 0)
+        self.recent_layout.setSpacing(6)
+        tag_layout.addWidget(self.recent_container)
+
+        tag_layout.addStretch()
+
+        self.key_picker = QComboBox()
+        self.key_picker.addItem("All keys...")
+        self.key_picker.addItems(tags.PICKER_KEYS)
+        self.key_picker.setMaxVisibleItems(12)
+        self.key_picker.setToolTip("Pick any key or combo to insert as a tag")
+        self.key_picker.activated.connect(self.on_key_picked)
+        tag_layout.addWidget(self.key_picker)
+
+        main.addWidget(tag_group)
+        self.refresh_recent_keys()
+
+        QShortcut(QKeySequence("Ctrl+K"), self, self.insert_keypress_tag)
+        QShortcut(QKeySequence("Ctrl+Shift+W"), self, self.insert_wait_tag)
 
         controls = QHBoxLayout()
         controls.setSpacing(10)
@@ -367,6 +543,55 @@ class AutoTyper(QMainWindow):
 
         self.on_language_changed(self.lang_combo.currentText())
 
+    def refresh_recent_keys(self):
+        while self.recent_layout.count():
+            widget = self.recent_layout.takeAt(0).widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        for label in self.recent_keys[:8]:
+            chip = QPushButton(label)
+            chip.setObjectName("keyChip")
+            chip.setCursor(Qt.PointingHandCursor)
+            chip.setToolTip(f"Insert {tags.keypress_tag(label)}")
+            chip.clicked.connect(
+                lambda _checked=False, key=label: self.insert_key_tag(key)
+            )
+            self.recent_layout.addWidget(chip)
+
+    def insert_snippet(self, snippet, caret_offset):
+        cursor = self.text_edit.textCursor()
+        start = cursor.selectionStart()
+        cursor.insertText(snippet)
+        cursor.setPosition(start + caret_offset)
+        self.text_edit.setTextCursor(cursor)
+        self.text_edit.setFocus()
+
+    def insert_keypress_tag(self):
+        self.insert_snippet(tags.KEYPRESS_SNIPPET, tags.KEYPRESS_CARET)
+
+    def insert_wait_tag(self):
+        self.insert_snippet(tags.WAIT_SNIPPET, tags.WAIT_CARET)
+
+    def insert_key_tag(self, label):
+        tag = tags.keypress_tag(label)
+        self.insert_snippet(tag, len(tag))
+        self.on_keys_used(label)
+
+    def on_key_picked(self, index):
+        if index <= 0:
+            return
+        self.insert_key_tag(self.key_picker.itemText(index))
+        self.key_picker.setCurrentIndex(0)
+
+    def on_keys_used(self, label):
+        if label in self.recent_keys:
+            self.recent_keys.remove(label)
+        self.recent_keys.insert(0, label)
+        del self.recent_keys[tags.MAX_RECENT_KEYS:]
+        self.refresh_recent_keys()
+        self.save_recent_keys()
+
     def on_language_changed(self, lang):
         self.indent_size = self.LANG_INDENT.get(lang, 4)
         
@@ -403,14 +628,30 @@ class AutoTyper(QMainWindow):
             self.countdown_label.setText("Typing in progress...")
             self.countdown_label.setStyleSheet("color: #a6e3a1;")
 
+    def update_status(self, msg):
+        self.status_label.setText(f"Status: {msg}")
+        self.status_label.setStyleSheet(
+            "color: #fab387;" if "Waiting" in msg else "color: #9399b2;"
+        )
+
     def start_typing(self):
         if not self.text_edit.toPlainText().strip():
             self.status_label.setText("Status: Please enter some text!")
             return
+
+        problems = tags.validate(self.text_edit.toPlainText())
+        if problems:
+            self.status_label.setText(f"Status: {problems[0]}")
+            for problem in problems:
+                self.logger.warning(f"Tag problem: {problem}")
+            return
+
         self.stop_flag = False
+        self.current_line = 0
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         self.status_label.setText("Status: Starting...")
+        self.status_label.setStyleSheet("color: #9399b2;")
         self.log("--- New typing session ---")
         self.typing_thread = threading.Thread(target=self.typing_worker, daemon=True)
         self.typing_thread.start()
@@ -460,13 +701,7 @@ class AutoTyper(QMainWindow):
         language=None,
     ):
         if language == "Plain Text" or (not handle_autoclose and not handle_indent):
-            plain_text_sol.type_text(
-                text,
-                self.speed_slider.value() / 1000.0,
-                line_delay,
-                lambda: self.stop_flag,
-                shift_enter,
-            )
+            plain_text_sol.type_text(self, text, line_delay, shift_enter)
             return
 
         if language == "Python":
@@ -485,30 +720,48 @@ class AutoTyper(QMainWindow):
 
         pending_closes = []
         current_indent_str = ""
+        # Tag-only lines eat the newline around them, so several script lines
+        # can land on one editor line. VS Code auto-indents from that whole
+        # line, not from the last script line that fed it.
+        editor_line = None
+        editor_indent = ""
 
         for line_idx, line in enumerate(lines):
             if self.stop_flag:
                 return
 
+            self.report_line(line_idx + 1)
             original_indent = self._get_indentation(line)
+            segments = tags.parse_line(line)
+
+            # A line holding nothing but tags is the action itself, so it gets no
+            # newline and takes no part in the indentation bookkeeping.
+            if tags.line_is_tags_only(segments):
+                tags.type_segments(
+                    self,
+                    tags.actions_only(segments),
+                    char_interval,
+                    False,
+                    pending_closes,
+                )
+                continue
+
+            if editor_line is None:
+                editor_line = ""
+                editor_indent = original_indent
 
             # Only strip the leading whitespace when _adjust_indentation is the
             # one writing it. With indentation handling off this must stay a
             # verbatim passthrough: every character, indentation included.
-            content = line.lstrip(' \t') if handle_indent else line
-            is_empty = (content == "")
+            if handle_indent:
+                tags.strip_leading_indent(segments)
 
-            if not is_empty:
-                if handle_autoclose:
-                    self._type_content_with_autoclose(content, char_interval, pending_closes)
-                else:
-                    for ch in content:
-                        if self.stop_flag:
-                            return
-                        pyautogui.write(ch)
-                        time.sleep(char_interval)
+            tags.type_segments(
+                self, segments, char_interval, handle_autoclose, pending_closes
+            )
+            editor_line += line
 
-            if line_idx < len(lines) - 1:
+            if tags.types_newline(lines, line_idx):
                 if shift_enter:
                     pyautogui.hotkey('shift', 'enter')
                     self.log(f"Line {line_idx+1}: pressed Shift+Enter")
@@ -516,12 +769,13 @@ class AutoTyper(QMainWindow):
                     pyautogui.press('enter')
                     self.log(f"Line {line_idx+1}: pressed Enter")
 
-                if handle_indent:
-                    time.sleep(0.2)  # Give VS Code time to auto‑indent
-                    next_line = lines[line_idx + 1]
-                    next_indent = self._get_indentation(next_line)
+                next_index = tags.next_typed_index(lines, line_idx + 1)
 
-                    last_non_space = line.rstrip(' \t')
+                if handle_indent and next_index is not None:
+                    time.sleep(0.2)  # Give VS Code time to auto‑indent
+                    next_indent = self._get_indentation(lines[next_index])
+
+                    last_non_space = editor_line.rstrip(' \t')
                     triggers_indent = last_non_space and last_non_space[-1] in self.AUTO_INDENT_CHARS
                     if triggers_indent:
                         auto_indent = current_indent_str + " " * self.indent_size
@@ -535,7 +789,9 @@ class AutoTyper(QMainWindow):
                     self._adjust_indentation(auto_indent, next_indent, char_interval)
                     current_indent_str = next_indent
                 else:
-                    current_indent_str = original_indent
+                    current_indent_str = editor_indent
+
+                editor_line = None
 
                 if line_delay > 0:
                     time.sleep(line_delay)
@@ -672,6 +928,7 @@ class AutoTyper(QMainWindow):
         self.countdown_label.setText("Ready")
         self.countdown_label.setStyleSheet("color: #a6e3a1;")
         self.status_label.setText("Status: Idle" if not self.stop_flag else "Status: Stopped")
+        self.status_label.setStyleSheet("color: #9399b2;")
         self.log("Typing session ended")
 
 
