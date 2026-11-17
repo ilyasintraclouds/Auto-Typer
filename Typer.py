@@ -22,9 +22,9 @@ import python_sol
 import tags
 
 
-# Shown in the title bar. The installer and the release workflow take their
-# version from the git tag, so bump this with them.
-VERSION = "2.3"
+# Shown in the title bar, and checked against the release tag by the build
+# workflow: bump this in the release commit, then tag it vMAJOR.MINOR.PATCH.
+VERSION = "2.3.0"
 
 
 class Signals(QObject):

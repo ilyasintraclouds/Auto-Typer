@@ -150,12 +150,28 @@ Start Menu entry, an optional desktop shortcut, and an uninstaller.
 
 ## Releases
 
-After committing the release changes, create and push a version tag:
+Releases are driven entirely by git tags. Nothing is built on a push or a pull
+request: the pipeline runs only when a version tag is pushed, and the version it
+ships is the one in the tag.
+
+1. Bump `VERSION` in `Typer.py` to the new number and commit it. The workflow
+   fails the build if this does not match the tag, so the title bar and the
+   installer can never disagree with the release.
+2. Tag that commit and push the tag:
 
 ```bash
 git tag -a v2.3.0 -m "Release v2.3.0"
 git push origin v2.3.0
 ```
 
-GitHub Actions builds the installer and publishes the GitHub release for pushed
-`v*` tags.
+The tag must be `vMAJOR.MINOR.PATCH`; anything else is rejected before the build
+starts. GitHub Actions then builds the onedir bundle, compiles the installer at
+that version, and publishes the GitHub release with
+`Auto-Typer-Setup-v<version>.exe` attached.
+
+To redo a release, move the tag and force-push it:
+
+```bash
+git tag -f -a v2.3.0 -m "Release v2.3.0"
+git push --force origin v2.3.0
+```
